@@ -1,0 +1,23 @@
+name: rb_ai_agent_v2
+description: A Jarvis-style Flutter AI agent with live provider streaming.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_tts: ^4.2.3
+  shared_preferences: ^2.5.3
+  http: ^1.6.0
+  speech_to_text: ^7.3.0
+  flutter_secure_storage: ^10.0.0
+  dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
