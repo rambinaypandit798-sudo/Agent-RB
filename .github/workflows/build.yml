@@ -25,8 +25,12 @@ jobs:
           git clone https://github.com/flutter/flutter.git --depth 1 -b stable _flutter
           echo "$GITHUB_WORKSPACE/_flutter/bin" >> $GITHUB_PATH
 
-      - name: Create Android Folder if missing
-        run: flutter create . --platforms=android --org com.example
+      - name: Create Android Folder & Fix Gradle
+        run: |
+          flutter create . --platforms=android --org com.example
+          echo "android.useAndroidX=true" >> android/gradle.properties
+          echo "android.enableJetifier=true" >> android/gradle.properties
+          echo "android.newScheme=false" >> android/gradle.properties
 
       - name: Install Dependencies
         run: flutter pub get
