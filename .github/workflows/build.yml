@@ -28,8 +28,10 @@ jobs:
       - name: Doctor Check
         run: flutter doctor -v
 
-      - name: Install Dependencies
-        run: flutter pub get
+      - name: Clean and Get Dependencies
+        run: |
+          flutter clean
+          flutter pub get
 
       - name: Build APK Release
         run: flutter build apk --release
