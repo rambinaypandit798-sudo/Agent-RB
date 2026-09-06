@@ -23,17 +23,16 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0'
+          flutter-version: '3.19.6'
           channel: 'stable'
-          cache: true
 
-      - name: Get Dependencies
+      - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build APK
+      - name: Build APK Release
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Upload Artifact APK
         uses: actions/upload-artifact@v4
         with:
           name: RB-AI-Agent-APK
