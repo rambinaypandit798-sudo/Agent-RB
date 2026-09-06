@@ -1983,4 +1983,3 @@ Future<void> main() async {
     RbAiApp(controller: controller),
   );
 }
-```
