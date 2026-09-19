@@ -25,7 +25,7 @@ data class MainUiState(
     val pendingAttachment: PendingAttachment? = null,
     val activeSessionId: String = "",
     val activeSessionTitle: String = "New Chat",
-    val modelLabel: String = "Gemini 1.5 Flash",
+    val modelLabel: String = "Gemini 2.0 Flash",
     val userMessageDraft: String = "",
     val errorMessage: String? = null
 )
