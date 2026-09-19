@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RB Agent</string>
+    <string name="app_subtitle">Personal AI Assistant</string>
+    <string name="accessibility_service_label">RB Agent Assistant</string>
+    <string name="accessibility_service_description">Lets RB Agent read on-screen context and perform helpful actions on your behalf.</string>
+</resources>

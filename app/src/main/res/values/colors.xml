@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="deep_space_start">#FF090D16</color>
+    <color name="deep_space_end">#FF04070D</color>
+    <color name="neon_cyan">#FF38BDF8</color>
+    <color name="electric_pink">#FFFF2D55</color>
+</resources>

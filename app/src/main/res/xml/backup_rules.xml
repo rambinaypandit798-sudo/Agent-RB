@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="sharedpref" path="rb_agent_settings.xml" />
+    <exclude domain="sharedpref" path="rb_agent_chat_cache.xml" />
+    <exclude domain="sharedpref" path="rb_agent_memory.xml" />
+    <exclude domain="sharedpref" path="rb_agent_projects.xml" />
+    <exclude domain="sharedpref" path="rb_agent_skills.xml" />
+</full-backup-content>
