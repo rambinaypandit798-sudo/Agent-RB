@@ -32,11 +32,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.rbagent.assistant.ui.components.AttachmentSheet
 import com.rbagent.assistant.ui.components.ChatBubble
 import com.rbagent.assistant.ui.components.CentralOrb
 import com.rbagent.assistant.ui.components.FrostedInputBar
 import com.rbagent.assistant.ui.components.FrostedSideDrawer
 import com.rbagent.assistant.ui.components.LiveVoiceOverlay
+import com.rbagent.assistant.ui.components.QuickVoiceDialog
 import com.rbagent.assistant.ui.components.TopHeaderBar
 import com.rbagent.assistant.ui.theme.DeepSpaceEnd
 import com.rbagent.assistant.ui.theme.DeepSpaceStart
@@ -50,15 +52,15 @@ fun MainScreen(viewModel: MainViewModel) {
     val snackbarHost = remember { SnackbarHostState() }
 
     LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty()) {
+        if (state.messages.isNotEmpty())
             runCatching { listState.animateScrollToItem(state.messages.lastIndex) }
-        }
     }
     LaunchedEffect(state.drawerOpen) {
         if (state.drawerOpen) drawerState.open() else drawerState.close()
     }
     LaunchedEffect(drawerState.currentValue) {
-        if (drawerState.currentValue == DrawerValue.Closed && state.drawerOpen) viewModel.closeDrawer()
+        if (drawerState.currentValue == DrawerValue.Closed && state.drawerOpen)
+            viewModel.closeDrawer()
     }
     LaunchedEffect(state.errorMessage) {
         state.errorMessage?.let { snackbarHost.showSnackbar(it); viewModel.clearError() }
@@ -84,8 +86,7 @@ fun MainScreen(viewModel: MainViewModel) {
         }
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
+            modifier = Modifier.fillMaxSize()
                 .background(Brush.verticalGradient(listOf(DeepSpaceStart, DeepSpaceEnd)))
         ) {
             Scaffold(
@@ -102,8 +103,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 modifier = Modifier.imePadding()
             ) { padding ->
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
+                    modifier = Modifier.fillMaxSize()
                         .padding(padding)
                         .statusBarsPadding()
                         .padding(bottom = 96.dp)
@@ -134,22 +134,41 @@ fun MainScreen(viewModel: MainViewModel) {
                         text = state.userMessageDraft,
                         isSending = state.isSending,
                         modelLabel = state.modelLabel,
+                        attachment = state.pendingAttachment,
                         onTextChange = viewModel::onDraftChange,
                         onSend = { viewModel.sendMessage() },
-                        onMicClick = { viewModel.setLiveVoiceVisible(true) },
+                        onMicClick = { viewModel.setQuickVoiceVisible(true) },
                         onLiveMicClick = { viewModel.setLiveVoiceVisible(true) },
-                        onAttachClick = { },
+                        onAttachClick = { viewModel.setAttachmentSheetVisible(true) },
+                        onClearAttachment = { viewModel.clearAttachment() },
                         onModelClick = { },
                         onStopClick = { viewModel.stopSpeaking() }
                     )
                 }
             }
 
+            // ── Full-screen Live Voice Overlay ──
             if (state.liveVoiceVisible) {
                 LiveVoiceOverlay(
                     isSpeaking = state.aiState == AiState.SPEAKING,
                     onDismiss = { viewModel.setLiveVoiceVisible(false) },
                     onTranscriptReady = { viewModel.onLiveVoiceResult(it) }
+                )
+            }
+
+            // ── Quick STT dialog ──
+            if (state.quickVoiceVisible) {
+                QuickVoiceDialog(
+                    onDismiss = { viewModel.setQuickVoiceVisible(false) },
+                    onTranscriptReady = { viewModel.onQuickVoiceResult(it) }
+                )
+            }
+
+            // ── Attachment bottom sheet ──
+            if (state.attachmentSheetVisible) {
+                AttachmentSheet(
+                    onDismiss = { viewModel.setAttachmentSheetVisible(false) },
+                    onPick = { uri, hint -> viewModel.onAttachmentSelected(uri, hint) }
                 )
             }
         }

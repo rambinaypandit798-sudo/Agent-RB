@@ -3,6 +3,7 @@ package com.rbagent.assistant.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -19,9 +21,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
@@ -34,8 +40,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rbagent.assistant.ui.PendingAttachment
 import com.rbagent.assistant.ui.theme.ElectricPink
 import com.rbagent.assistant.ui.theme.FrostedBorder
 import com.rbagent.assistant.ui.theme.FrostedSlateHeavy
@@ -45,59 +53,140 @@ import com.rbagent.assistant.ui.theme.TextPrimary
 
 @Composable
 fun FrostedInputBar(
-    text: String, isSending: Boolean, modelLabel: String,
-    onTextChange: (String) -> Unit, onSend: () -> Unit,
-    onMicClick: () -> Unit, onLiveMicClick: () -> Unit,
-    onAttachClick: () -> Unit, onModelClick: () -> Unit,
-    onStopClick: () -> Unit, modifier: Modifier = Modifier
+    text: String,
+    isSending: Boolean,
+    modelLabel: String,
+    attachment: PendingAttachment?,
+    onTextChange: (String) -> Unit,
+    onSend: () -> Unit,
+    onMicClick: () -> Unit,
+    onLiveMicClick: () -> Unit,
+    onAttachClick: () -> Unit,
+    onClearAttachment: () -> Unit,
+    onModelClick: () -> Unit,
+    onStopClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier
+            .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(FrostedSlateHeavy)
             .border(1.dp, FrostedBorder, RoundedCornerShape(24.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
+        // ── Attachment preview ──
+        if (attachment != null) {
+            AttachmentChip(
+                attachment = attachment,
+                onRemove = onClearAttachment
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // ── Row 1: model pill + attach ──
         Row(verticalAlignment = Alignment.CenterVertically) {
             ModelPill(label = modelLabel, onClick = onModelClick)
             Spacer(Modifier.weight(1f))
             MiniFrostedButton(Icons.Filled.Add, NeonCyan, onAttachClick)
         }
+
         Spacer(Modifier.height(8.dp))
+
+        // ── Row 2: field + buttons ──
         Row(verticalAlignment = Alignment.Bottom) {
             BasicTextField(
-                value = text, onValueChange = onTextChange,
-                textStyle = LocalTextStyle.current.merge(TextStyle(color = TextPrimary, fontSize = 15.sp, lineHeight = 20.sp)),
-                cursorBrush = SolidColor(NeonCyan), maxLines = 6,
+                value = text,
+                onValueChange = onTextChange,
+                textStyle = LocalTextStyle.current.merge(
+                    TextStyle(color = TextPrimary, fontSize = 15.sp, lineHeight = 20.sp)
+                ),
+                cursorBrush = SolidColor(NeonCyan),
+                maxLines = 6,
                 modifier = Modifier.weight(1f).padding(vertical = 8.dp),
                 decorationBox = { inner ->
                     Box {
-                        if (text.isEmpty()) Text("आस्क RB एजेंट...", color = SlateMuted, fontSize = 15.sp)
+                        if (text.isEmpty()) Text("आस्क RB एजेंट...",
+                            color = SlateMuted, fontSize = 15.sp)
                         inner()
                     }
                 }
             )
             Spacer(Modifier.width(6.dp))
+            // Regular mic → quick STT (fills draft)
             MiniFrostedButton(Icons.Filled.Mic, NeonCyan, onMicClick)
             Spacer(Modifier.width(6.dp))
+            // Live mic → full overlay conversation
             MiniFrostedButton(Icons.Filled.GraphicEq, ElectricPink, onLiveMicClick)
             Spacer(Modifier.width(6.dp))
             if (isSending) {
                 Box(
-                    modifier = Modifier.size(40.dp).clip(CircleShape).background(ElectricPink)
-                        .clickable { onStopClick() },
+                    modifier = Modifier.size(40.dp).clip(CircleShape)
+                        .background(ElectricPink).clickable { onStopClick() },
                     contentAlignment = Alignment.Center
-                ) { Icon(Icons.Filled.Stop, "Stop", tint = Color.White, modifier = Modifier.size(20.dp)) }
+                ) {
+                    Icon(Icons.Filled.Stop, "Stop", tint = Color.White,
+                        modifier = Modifier.size(20.dp))
+                }
             } else {
-                val enabled = text.isNotBlank()
+                val enabled = text.isNotBlank() || attachment != null
                 Box(
                     modifier = Modifier.size(40.dp).clip(CircleShape)
                         .background(if (enabled) NeonCyan else Color(0x3338BDF8))
                         .clickable(enabled = enabled) { onSend() },
                     contentAlignment = Alignment.Center
-                ) { Icon(Icons.Filled.ArrowUpward, "Send", tint = if (enabled) Color(0xFF04070D) else SlateMuted, modifier = Modifier.size(22.dp)) }
+                ) {
+                    Icon(Icons.Filled.ArrowUpward, "Send",
+                        tint = if (enabled) Color(0xFF04070D) else SlateMuted,
+                        modifier = Modifier.size(22.dp))
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentChip(
+    attachment: PendingAttachment,
+    onRemove: () -> Unit
+) {
+    val icon: ImageVector = when {
+        attachment.mimeType.startsWith("image/") -> Icons.Filled.Image
+        attachment.mimeType.startsWith("video/") -> Icons.Filled.VideoLibrary
+        else -> Icons.Filled.Description
+    }
+    Row(
+        modifier = Modifier
+            .widthIn(max = 320.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0x331E293B))
+            .border(1.dp, NeonCyan.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(28.dp).clip(CircleShape)
+                .background(NeonCyan.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = NeonCyan, modifier = Modifier.size(15.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f, fill = false)) {
+            Text(attachment.displayName, color = TextPrimary, fontSize = 12.sp,
+                fontWeight = FontWeight.Medium, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            Text(attachment.mimeType, color = SlateMuted, fontSize = 10.sp)
+        }
+        Spacer(Modifier.width(6.dp))
+        Box(
+            modifier = Modifier.size(22.dp).clip(CircleShape)
+                .background(Color(0x33FF2D55)).clickable { onRemove() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Close, "Remove", tint = ElectricPink,
+                modifier = Modifier.size(12.dp))
         }
     }
 }
@@ -112,7 +201,8 @@ private fun ModelPill(label: String, onClick: () -> Unit) {
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Filled.AutoAwesome, null, tint = NeonCyan, modifier = Modifier.size(13.dp))
+        Icon(Icons.Filled.AutoAwesome, null, tint = NeonCyan,
+            modifier = Modifier.size(13.dp))
         Spacer(Modifier.width(6.dp))
         Text(label, color = NeonCyan, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     }
@@ -126,5 +216,7 @@ private fun MiniFrostedButton(icon: ImageVector, tint: Color, onClick: () -> Uni
             .border(1.dp, FrostedBorder, CircleShape)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
-    ) { Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp)) }
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))
+    }
 }

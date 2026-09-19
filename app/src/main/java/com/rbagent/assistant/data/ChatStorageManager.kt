@@ -16,7 +16,6 @@ class ChatStorageManager private constructor(context: Context) {
         private const val KEY_ACTIVE_SESSION_ID = "active_session_id"
 
         @Volatile private var INSTANCE: ChatStorageManager? = null
-
         fun getInstance(context: Context): ChatStorageManager =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: ChatStorageManager(context.applicationContext).also { INSTANCE = it }
@@ -33,11 +32,17 @@ class ChatStorageManager private constructor(context: Context) {
         val role: Role,
         val content: String,
         val timestamp: Long = System.currentTimeMillis(),
-        val isError: Boolean = false
+        val isError: Boolean = false,
+        val attachmentUri: String? = null,
+        val attachmentMime: String? = null,
+        val attachmentName: String? = null
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("id", id); put("role", role.name); put("content", content)
             put("timestamp", timestamp); put("isError", isError)
+            attachmentUri?.let { put("attachmentUri", it) }
+            attachmentMime?.let { put("attachmentMime", it) }
+            attachmentName?.let { put("attachmentName", it) }
         }
         companion object {
             fun fromJson(obj: JSONObject): ChatMessage = ChatMessage(
@@ -45,7 +50,10 @@ class ChatStorageManager private constructor(context: Context) {
                 role = runCatching { Role.valueOf(obj.getString("role")) }.getOrDefault(Role.USER),
                 content = obj.optString("content", ""),
                 timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                isError = obj.optBoolean("isError", false)
+                isError = obj.optBoolean("isError", false),
+                attachmentUri = obj.optString("attachmentUri", "").takeIf { it.isNotBlank() },
+                attachmentMime = obj.optString("attachmentMime", "").takeIf { it.isNotBlank() },
+                attachmentName = obj.optString("attachmentName", "").takeIf { it.isNotBlank() }
             )
         }
     }
@@ -87,7 +95,7 @@ class ChatStorageManager private constructor(context: Context) {
             for (i in 0 until arr.length()) list.add(ChatSession.fromJson(arr.getJSONObject(i)))
             list.sortedByDescending { it.updatedAt }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse sessions JSON — resetting cache.", e)
+            Log.e(TAG, "parse failed — resetting", e)
             prefs.edit().remove(KEY_SESSIONS).apply(); emptyList()
         }
     }
@@ -96,44 +104,41 @@ class ChatStorageManager private constructor(context: Context) {
         try {
             val arr = JSONArray(); sessions.forEach { arr.put(it.toJson()) }
             prefs.edit().putString(KEY_SESSIONS, arr.toString()).apply()
-        } catch (e: Exception) { Log.e(TAG, "Failed to serialize sessions", e) }
+        } catch (e: Exception) { Log.e(TAG, "serialize failed", e) }
     }
 
-    @Synchronized fun getSession(sessionId: String): ChatSession? =
-        loadAllSessions().firstOrNull { it.id == sessionId }
+    @Synchronized fun getSession(id: String): ChatSession? = loadAllSessions().firstOrNull { it.id == id }
 
     @Synchronized fun createNewSession(title: String = "New Chat"): ChatSession {
-        val session = ChatSession(title = title)
-        val all = loadAllSessions().toMutableList()
-        all.add(0, session); saveAllSessions(all); setActiveSessionId(session.id)
-        return session
+        val s = ChatSession(title = title)
+        val all = loadAllSessions().toMutableList(); all.add(0, s)
+        saveAllSessions(all); setActiveSessionId(s.id); return s
     }
 
-    @Synchronized fun deleteSession(sessionId: String) {
-        val all = loadAllSessions().toMutableList()
-        all.removeAll { it.id == sessionId }
+    @Synchronized fun deleteSession(id: String) {
+        val all = loadAllSessions().toMutableList(); all.removeAll { it.id == id }
         saveAllSessions(all)
-        if (getActiveSessionId() == sessionId) prefs.edit().remove(KEY_ACTIVE_SESSION_ID).apply()
+        if (getActiveSessionId() == id) prefs.edit().remove(KEY_ACTIVE_SESSION_ID).apply()
     }
 
     @Synchronized fun appendMessage(sessionId: String, message: ChatMessage): ChatSession? {
         val all = loadAllSessions().toMutableList()
         val idx = all.indexOfFirst { it.id == sessionId }
-        if (idx < 0) { Log.w(TAG, "appendMessage: session $sessionId not found"); return null }
-        val session = all[idx]
-        session.messages.add(message)
-        val newTitle = if (session.title == "New Chat" && message.role == Role.USER && message.content.isNotBlank()) {
-            val t = message.content.trim().replace("\n", " ")
+        if (idx < 0) return null
+        val s = all[idx]; s.messages.add(message)
+        val newTitle = if (s.title == "New Chat" && message.role == Role.USER &&
+            (message.content.isNotBlank() || message.attachmentName != null)) {
+            val base = message.content.ifBlank { message.attachmentName ?: "Attachment" }
+            val t = base.trim().replace("\n", " ")
             if (t.length > 40) t.substring(0, 40) + "…" else t
-        } else session.title
-        val updated = session.copy(title = newTitle, updatedAt = System.currentTimeMillis())
+        } else s.title
+        val updated = s.copy(title = newTitle, updatedAt = System.currentTimeMillis())
         all[idx] = updated; saveAllSessions(all); return updated
     }
 
-    @Synchronized fun clearSessionMessages(sessionId: String) {
+    @Synchronized fun clearSessionMessages(id: String) {
         val all = loadAllSessions().toMutableList()
-        val idx = all.indexOfFirst { it.id == sessionId }
-        if (idx < 0) return
+        val idx = all.indexOfFirst { it.id == id }; if (idx < 0) return
         all[idx] = all[idx].copy(messages = mutableListOf(), updatedAt = System.currentTimeMillis())
         saveAllSessions(all)
     }
@@ -146,12 +151,10 @@ class ChatStorageManager private constructor(context: Context) {
     fun getActiveSessionId(): String? = prefs.getString(KEY_ACTIVE_SESSION_ID, null)
 
     @Synchronized fun getOrCreateActiveSession(): ChatSession {
-        val activeId = getActiveSessionId()
-        if (activeId != null) getSession(activeId)?.let { return it }
+        val active = getActiveSessionId()
+        if (active != null) getSession(active)?.let { return it }
         val existing = loadAllSessions().firstOrNull()
         if (existing != null) { setActiveSessionId(existing.id); return existing }
         return createNewSession()
     }
-
-    @Synchronized fun totalMessageCount(): Int = loadAllSessions().sumOf { it.messages.size }
 }

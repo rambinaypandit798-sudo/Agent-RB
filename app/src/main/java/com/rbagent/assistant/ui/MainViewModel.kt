@@ -1,6 +1,8 @@
 package com.rbagent.assistant.ui
 
 import android.app.Application
+import android.net.Uri
+import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,16 +11,22 @@ import com.rbagent.assistant.data.ChatStorageManager
 import com.rbagent.assistant.data.MemoryManager
 import com.rbagent.assistant.data.SettingsManager
 import com.rbagent.assistant.voice.VoiceEngineManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
-    companion object { private const val TAG = "MainViewModel" }
+    companion object {
+        private const val TAG = "MainViewModel"
+        private const val MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024   // 8 MB
+    }
 
+    private val appContext = app.applicationContext
     private val settings = SettingsManager.getInstance(app)
     private val chatStorage = ChatStorageManager.getInstance(app)
     private val memory = MemoryManager.getInstance(app)
@@ -31,9 +39,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         val session = chatStorage.getOrCreateActiveSession()
         _uiState.update {
-            it.copy(messages = session.messages.toList(),
+            it.copy(
+                messages = session.messages.toList(),
                 activeSessionId = session.id,
-                activeSessionTitle = session.title)
+                activeSessionTitle = session.title
+            )
         }
         viewModelScope.launch {
             voice.isSpeakingFlow.collect { speaking ->
@@ -46,28 +56,87 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun onDraftChange(text: String) { _uiState.update { it.copy(userMessageDraft = text) } }
+    // ────────────────────────────────────────────────────────────────
+    // BASIC UI ACTIONS
+    // ────────────────────────────────────────────────────────────────
+    fun onDraftChange(t: String) { _uiState.update { it.copy(userMessageDraft = t) } }
     fun toggleDrawer() { _uiState.update { it.copy(drawerOpen = !it.drawerOpen) } }
     fun closeDrawer() { _uiState.update { it.copy(drawerOpen = false) } }
-    fun setLiveVoiceVisible(visible: Boolean) {
-        _uiState.update { it.copy(liveVoiceVisible = visible,
-            aiState = if (visible) AiState.LISTENING else AiState.IDLE) }
-    }
-    fun setAiState(state: AiState) { _uiState.update { it.copy(aiState = state) } }
+    fun setAiState(s: AiState) { _uiState.update { it.copy(aiState = s) } }
     fun clearError() { _uiState.update { it.copy(errorMessage = null) } }
 
+    fun setLiveVoiceVisible(v: Boolean) {
+        _uiState.update {
+            it.copy(liveVoiceVisible = v,
+                aiState = if (v) AiState.LISTENING else AiState.IDLE)
+        }
+    }
+
+    fun setQuickVoiceVisible(v: Boolean) {
+        _uiState.update { it.copy(quickVoiceVisible = v) }
+    }
+
+    fun setAttachmentSheetVisible(v: Boolean) {
+        _uiState.update { it.copy(attachmentSheetVisible = v) }
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // ATTACHMENTS
+    // ────────────────────────────────────────────────────────────────
+    fun onAttachmentSelected(uri: Uri?, mimeHint: String?) {
+        if (uri == null) { _uiState.update { it.copy(attachmentSheetVisible = false) }; return }
+        val resolver = appContext.contentResolver
+        val mime = mimeHint ?: resolver.getType(uri) ?: "application/octet-stream"
+        val name = queryDisplayName(uri) ?: uri.lastPathSegment ?: "attachment"
+        _uiState.update {
+            it.copy(
+                pendingAttachment = PendingAttachment(uri.toString(), mime, name),
+                attachmentSheetVisible = false
+            )
+        }
+    }
+
+    fun clearAttachment() { _uiState.update { it.copy(pendingAttachment = null) } }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            appContext.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // SEND MESSAGE (text + optional attachment)
+    // ────────────────────────────────────────────────────────────────
     fun sendMessage(text: String = _uiState.value.userMessageDraft) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || _uiState.value.isSending) return
-        val sessionId = _uiState.value.activeSessionId
-        if (sessionId.isEmpty()) { Log.e(TAG, "sendMessage: no active session"); return }
+        val attachment = _uiState.value.pendingAttachment
+        if (trimmed.isEmpty() && attachment == null) return
+        if (_uiState.value.isSending) return
 
-        val userMsg = ChatStorageManager.ChatMessage(role = ChatStorageManager.Role.USER, content = trimmed)
+        val sessionId = _uiState.value.activeSessionId
+        if (sessionId.isEmpty()) return
+
+        val userMsg = ChatStorageManager.ChatMessage(
+            role = ChatStorageManager.Role.USER,
+            content = trimmed,
+            attachmentUri = attachment?.uri,
+            attachmentMime = attachment?.mimeType,
+            attachmentName = attachment?.displayName
+        )
         chatStorage.appendMessage(sessionId, userMsg)
-        memory.autoLearnFromUserMessage(trimmed)
+        if (trimmed.isNotBlank()) memory.autoLearnFromUserMessage(trimmed)
+
         _uiState.update {
-            it.copy(messages = it.messages + userMsg, userMessageDraft = "",
-                isSending = true, aiState = AiState.THINKING)
+            it.copy(
+                messages = it.messages + userMsg,
+                userMessageDraft = "",
+                pendingAttachment = null,
+                isSending = true,
+                aiState = AiState.THINKING
+            )
         }
 
         viewModelScope.launch {
@@ -77,6 +146,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val facts = memory.getFactStrings()
             val history = _uiState.value.messages.dropLast(1)
 
+            var b64: String? = null
+            var mime: String? = null
+            if (attachment != null) {
+                val bytes = readBytes(Uri.parse(attachment.uri))
+                if (bytes != null && bytes.size <= MAX_ATTACHMENT_BYTES) {
+                    b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    mime = attachment.mimeType
+                } else if (bytes != null) {
+                    val errMsg = ChatStorageManager.ChatMessage(
+                        role = ChatStorageManager.Role.ASSISTANT,
+                        content = "Attachment too large (${bytes.size / (1024 * 1024)} MB). Max is 8 MB.",
+                        isError = true
+                    )
+                    chatStorage.appendMessage(sessionId, errMsg)
+                    _uiState.update {
+                        it.copy(messages = it.messages + errMsg,
+                            isSending = false, aiState = AiState.IDLE,
+                            errorMessage = "Attachment too large")
+                    }
+                    return@launch
+                }
+            }
+
             val result = gemini.generateContent(
                 GeminiApiClient.RequestParams(
                     apiKey = apiKey,
@@ -84,7 +176,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     userName = userName,
                     memoryFacts = facts,
                     conversationHistory = history,
-                    newUserMessage = trimmed
+                    newUserMessage = trimmed.ifBlank { "Please analyze the attached file." },
+                    attachmentBase64 = b64,
+                    attachmentMime = mime
                 )
             )
 
@@ -114,32 +208,51 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun newSession() {
-        val session = chatStorage.createNewSession()
-        _uiState.update {
-            it.copy(messages = emptyList(), activeSessionId = session.id,
-                activeSessionTitle = session.title, drawerOpen = false, aiState = AiState.IDLE)
+    private suspend fun readBytes(uri: Uri): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } catch (e: Exception) {
+            Log.e(TAG, "readBytes failed", e); null
         }
     }
 
-    fun switchSession(sessionId: String) {
-        val s = chatStorage.getSession(sessionId) ?: return
-        chatStorage.setActiveSessionId(sessionId)
+    // ────────────────────────────────────────────────────────────────
+    // SESSIONS
+    // ────────────────────────────────────────────────────────────────
+    fun newSession() {
+        val s = chatStorage.createNewSession()
+        _uiState.update {
+            it.copy(messages = emptyList(), activeSessionId = s.id,
+                activeSessionTitle = s.title, drawerOpen = false, aiState = AiState.IDLE)
+        }
+    }
+
+    fun switchSession(id: String) {
+        val s = chatStorage.getSession(id) ?: return
+        chatStorage.setActiveSessionId(id)
         _uiState.update {
             it.copy(messages = s.messages.toList(), activeSessionId = s.id,
                 activeSessionTitle = s.title, drawerOpen = false)
         }
     }
 
-    fun deleteSession(sessionId: String) {
-        chatStorage.deleteSession(sessionId)
-        if (sessionId == _uiState.value.activeSessionId) {
+    fun deleteSession(id: String) {
+        chatStorage.deleteSession(id)
+        if (id == _uiState.value.activeSessionId) {
             val next = chatStorage.loadAllSessions().firstOrNull()
             if (next != null) switchSession(next.id) else newSession()
         }
     }
 
     fun allSessions(): List<ChatStorageManager.ChatSession> = chatStorage.loadAllSessions()
+
+    // ────────────────────────────────────────────────────────────────
+    // VOICE — quick STT fills the draft; live opens the full overlay
+    // ────────────────────────────────────────────────────────────────
+    fun onQuickVoiceResult(transcript: String) {
+        setQuickVoiceVisible(false)
+        _uiState.update { it.copy(userMessageDraft = transcript) }
+    }
 
     fun onLiveVoiceResult(transcript: String) {
         setLiveVoiceVisible(false)
