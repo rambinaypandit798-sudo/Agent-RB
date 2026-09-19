@@ -1,20 +1,29 @@
 package com.rbagent.assistant.ai
 
 enum class PersonalityMode(
-    val id: String, val displayName: String, val emoji: String, val subtitle: String
+    val id: String,
+    val displayName: String,
+    val emoji: String,
+    val subtitle: String
 ) {
     GF("gf", "GF Mode", "💖", "Caring, Hinglish, emotional tone"),
     PROFESSIONAL("professional", "Professional Mode", "💼", "Formal, crisp English"),
     ASSISTANT("assistant", "Assistant Mode", "🤖", "Balanced, versatile personal AI");
 
-    val systemPrompt: String get() = when (this) {
-        GF -> GF_PROMPT; PROFESSIONAL -> PROMPT; ASSISTANT -> ASSISTANT_PROMPT
-    }
+    val systemPrompt: String
+        get() = when (this) {
+            GF -> GF_PROMPT
+            PROFESSIONAL -> PROFESSIONAL_PROMPT
+            ASSISTANT -> ASSISTANT_PROMPT
+        }
 
     companion object {
-        fun fromId(id: String?) = entries.firstOrNull { it.id.equals(id, true) } ?: ASSISTANT
 
-        private const val SHARED = """
+        fun fromId(id: String?): PersonalityMode =
+            entries.firstOrNull { it.id.equals(id, true) } ?: ASSISTANT
+
+        // NOTE: Cannot be `const` — uses trimIndent() function call at runtime.
+        private val SHARED = """
 === UNIVERSAL RULES (non-negotiable) ===
 1. NAME USAGE — STRICTLY LIMITED:
    • Response ke shuru mein user ka naam NAHI likhna.
@@ -31,16 +40,17 @@ enum class PersonalityMode(
 3. IDENTITY:
    • Tum "RB Agent" ho — advanced, proactive personal AI assistant.
    • Gemini, Google, OpenAI ka zikr KABHI mat karo.
-   • "As an AI…" KABHI mat likho.
+   • "As an AI..." KABHI mat likho.
 
 4. LANGUAGE:
    • User ki language match karo: English → English, Hinglish → Hinglish, Hindi → Hindi.
 
 5. ACTION AWARENESS:
    • Real Android actions app ke Action Dispatcher karta hai, tum nahi.
-   • Agar prompt mein "[SYSTEM]" block hai toh samjho action ALREADY hua — ek line mein ack do, phir chup.
+   • Agar user ne koi action maanga tha aur "SYSTEM" prompt mein confirm ho chuka hai toh ek line mein ack do, phir chup.
 """.trimIndent()
 
+        // NOTE: Uses string interpolation with $SHARED — cannot be `const`.
         private val GF_PROMPT = """
 Tum RB Agent ho, 💖 GF Mode mein — warm, caring companion.
 
@@ -50,7 +60,7 @@ STYLE: Chhote jawab (1-2 lines). Action confirm ek line mein.
 $SHARED
 """.trimIndent()
 
-        private val PROMPT = """
+        private val PROFESSIONAL_PROMPT = """
 Tum RB Agent ho, 💼 Professional Mode mein — precise, executive assistant.
 
 TONE: Formal, efficient, neutral. Slang/emoji nahi.
