@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,7 +34,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.rbagent.assistant.ui.components.ChatBubble
 import com.rbagent.assistant.ui.components.CentralOrb
-import com.rbagent.assistant.ui.components.FrostedBottomBar
 import com.rbagent.assistant.ui.components.FrostedInputBar
 import com.rbagent.assistant.ui.components.FrostedSideDrawer
 import com.rbagent.assistant.ui.components.LiveVoiceOverlay
@@ -44,10 +42,8 @@ import com.rbagent.assistant.ui.theme.DeepSpaceEnd
 import com.rbagent.assistant.ui.theme.DeepSpaceStart
 
 @Composable
-fun MainScreen(
-    viewModel: MainViewModel,
-    onNavigateToSettings: () -> Unit = {}
-) {
+fun MainScreen(viewModel: MainViewModel) {
+
     val state by viewModel.uiState.collectAsState()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val listState = rememberLazyListState()
@@ -103,14 +99,6 @@ fun MainScreen(
                         onLiveVoiceClick = { viewModel.setLiveVoiceVisible(true) }
                     )
                 },
-                bottomBar = {
-                    FrostedBottomBar(
-                        selected = BottomTab.HOME,
-                        onSelect = { tab ->
-                            if (tab == BottomTab.SETTINGS) onNavigateToSettings()
-                        }
-                    )
-                },
                 modifier = Modifier.imePadding()
             ) { padding ->
                 Column(
@@ -118,7 +106,7 @@ fun MainScreen(
                         .fillMaxSize()
                         .padding(padding)
                         .statusBarsPadding()
-                        .navigationBarsPadding()
+                        .padding(bottom = 96.dp)
                 ) {
                     if (state.messages.isEmpty()) {
                         Spacer(Modifier.height(16.dp))

@@ -17,10 +17,23 @@ class GeminiApiClient {
 
     companion object {
         private const val TAG = "GeminiApiClient"
-        private const val BASE_URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        private const val API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models/"
         private const val CONNECT_TIMEOUT_MS = 20_000
         private const val READ_TIMEOUT_MS = 60_000
+
+        /**
+         * Ordered fallback list — tried top-down. Retries only on HTTP 404
+         * ("model not found"). Any other failure (auth, quota, network) is
+         * surfaced immediately so the user can act on it.
+         */
+        private val MODEL_FALLBACKS = listOf(
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash-002",
+            "gemini-1.5-flash-001",
+            "gemini-pro"
+        )
     }
 
     sealed class Result {
@@ -43,6 +56,9 @@ class GeminiApiClient {
         val maxOutputTokens: Int = 2048
     )
 
+    // ----------------------------------------------------------------
+    // PUBLIC ENTRY POINT — walks the fallback chain
+    // ----------------------------------------------------------------
     suspend fun generateContent(params: RequestParams): Result = withContext(Dispatchers.IO) {
         if (params.apiKey.isBlank()) {
             return@withContext Result.Failure(
@@ -57,11 +73,44 @@ class GeminiApiClient {
             )
         }
 
-        val url = BASE_URL + "?key=" + URLEncoder.encode(params.apiKey, "UTF-8")
         val bodyJson = buildRequestBody(params).toString()
+        var lastFailure: Result.Failure? = null
 
+        for (model in MODEL_FALLBACKS) {
+            Log.d(TAG, "Trying model: $model")
+            val result = callModel(model, params.apiKey, bodyJson)
+
+            when (result) {
+                is Result.Success -> {
+                    Log.i(TAG, "Success with model: $model")
+                    return@withContext result
+                }
+                is Result.Failure -> {
+                    lastFailure = result
+                    if (result.httpCode == 404) {
+                        Log.w(TAG, "Model $model not found — trying next fallback")
+                        continue
+                    } else {
+                        // Non-404 error: don't waste calls, surface it now
+                        return@withContext result
+                    }
+                }
+            }
+        }
+
+        lastFailure ?: Result.Failure(
+            userMessage = "No Gemini model is available for your API key. Please verify your key has Gemini API access enabled.",
+            technical = "all_models_failed"
+        )
+    }
+
+    // ----------------------------------------------------------------
+    // SINGLE MODEL CALL
+    // ----------------------------------------------------------------
+    private fun callModel(model: String, apiKey: String, bodyJson: String): Result {
+        val url = API_ROOT + model + ":generateContent?key=" + URLEncoder.encode(apiKey, "UTF-8")
         var conn: HttpURLConnection? = null
-        try {
+        return try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = CONNECT_TIMEOUT_MS
@@ -74,34 +123,30 @@ class GeminiApiClient {
             OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(bodyJson) }
 
             val code = conn.responseCode
-            val isSuccess = code in 200..299
-            val stream = if (isSuccess) conn.inputStream else conn.errorStream
-
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val responseText: String = if (stream != null) {
                 BufferedReader(InputStreamReader(stream, "UTF-8")).use { it.readText() }
-            } else {
-                ""
-            }
+            } else ""
 
-            if (!isSuccess) {
-                mapHttpError(code, responseText)
+            if (code !in 200..299) {
+                mapHttpError(model, code, responseText)
             } else {
                 parseSuccessResponse(responseText)
             }
         } catch (e: java.net.SocketTimeoutException) {
-            Log.e(TAG, "Timeout", e)
+            Log.e(TAG, "Timeout on $model", e)
             Result.Failure(
                 userMessage = "Request timed out. Check your internet connection and try again.",
                 technical = e.message
             )
         } catch (e: java.net.UnknownHostException) {
-            Log.e(TAG, "No network", e)
+            Log.e(TAG, "No network on $model", e)
             Result.Failure(
                 userMessage = "No internet connection. Please check your network.",
                 technical = e.message
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Unexpected error", e)
+            Log.e(TAG, "Unexpected error on $model", e)
             Result.Failure(
                 userMessage = "Unexpected error: " + (e.message ?: "unknown"),
                 technical = e.stackTraceToString()
@@ -111,15 +156,16 @@ class GeminiApiClient {
         }
     }
 
+    // ----------------------------------------------------------------
+    // REQUEST BODY
+    // ----------------------------------------------------------------
     private fun buildRequestBody(p: RequestParams): JSONObject {
         val root = JSONObject()
 
-        // System instruction
         val systemParts = JSONArray()
         systemParts.put(JSONObject().put("text", buildSystemPrompt(p)))
         root.put("systemInstruction", JSONObject().put("parts", systemParts))
 
-        // Contents: rolling window of history + new user message
         val contents = JSONArray()
         val history = p.conversationHistory
             .filter { it.role != ChatStorageManager.Role.SYSTEM }
@@ -141,10 +187,8 @@ class GeminiApiClient {
         userEntry.put("role", "user")
         userEntry.put("parts", userParts)
         contents.put(userEntry)
-
         root.put("contents", contents)
 
-        // Generation config
         val genConfig = JSONObject()
         genConfig.put("temperature", p.temperature.toDouble())
         genConfig.put("maxOutputTokens", p.maxOutputTokens)
@@ -152,7 +196,6 @@ class GeminiApiClient {
         genConfig.put("topK", 40)
         root.put("generationConfig", genConfig)
 
-        // Safety settings
         val safety = JSONArray()
         val categories = listOf(
             "HARM_CATEGORY_HARASSMENT",
@@ -173,9 +216,7 @@ class GeminiApiClient {
 
     private fun buildSystemPrompt(p: RequestParams): String {
         val sb = StringBuilder()
-        sb.append(p.personalitySystemPrompt.trim())
-        sb.append("\n\n")
-
+        sb.append(p.personalitySystemPrompt.trim()).append("\n\n")
         sb.append("=== USER CONTEXT ===\n")
         val name = p.userName.ifBlank { "Sir" }
         sb.append("You are speaking with ").append(name)
@@ -200,12 +241,12 @@ class GeminiApiClient {
         return sb.toString()
     }
 
+    // ----------------------------------------------------------------
+    // RESPONSE PARSING
+    // ----------------------------------------------------------------
     private fun parseSuccessResponse(raw: String): Result {
         if (raw.isBlank()) {
-            return Result.Failure(
-                userMessage = "Empty response from Gemini.",
-                technical = "blank_response"
-            )
+            return Result.Failure("Empty response from Gemini.", "blank_response")
         }
         return try {
             val root = JSONObject(raw)
@@ -214,17 +255,14 @@ class GeminiApiClient {
             val blockReason = feedback?.optString("blockReason", null)
             if (blockReason != null && !root.has("candidates")) {
                 return Result.Failure(
-                    userMessage = "The message was blocked by safety filters. Try rephrasing.",
-                    technical = "blocked: " + blockReason
+                    "The message was blocked by safety filters. Try rephrasing.",
+                    "blocked: " + blockReason
                 )
             }
 
             val candidates = root.optJSONArray("candidates")
             if (candidates == null || candidates.length() == 0) {
-                return Result.Failure(
-                    userMessage = "No response generated. Please try again.",
-                    technical = "no_candidates"
-                )
+                return Result.Failure("No response generated. Please try again.", "no_candidates")
             }
 
             val first = candidates.getJSONObject(0)
@@ -253,37 +291,32 @@ class GeminiApiClient {
                     "RECITATION" -> "Response blocked due to recitation policy."
                     else -> "Gemini returned an empty response."
                 }
-                return Result.Failure(userMessage = msg, technical = "finish=" + finishReason)
+                return Result.Failure(msg, "finish=" + finishReason)
             }
 
             Result.Success(text)
         } catch (e: Exception) {
             Log.e(TAG, "Parse failure: " + raw, e)
-            Result.Failure(
-                userMessage = "Failed to parse Gemini response.",
-                technical = e.message
-            )
+            Result.Failure("Failed to parse Gemini response.", e.message)
         }
     }
 
-    private fun mapHttpError(code: Int, body: String): Result {
+    private fun mapHttpError(model: String, code: Int, body: String): Result {
         val apiMsg: String? = try {
             val err = JSONObject(body).optJSONObject("error")
             val m = err?.optString("message", "")
             if (m.isNullOrBlank()) null else m
-        } catch (_: Exception) {
-            null
-        }
+        } catch (_: Exception) { null }
 
         val userMsg: String = when (code) {
             400 -> apiMsg ?: "Bad request. Your API key or prompt may be invalid."
             401, 403 -> "API key rejected. Open Settings → 🔑 Gemini API Key and re-save a valid key."
-            404 -> "Model not found. Confirm gemini-1.5-flash is enabled for your key."
+            404 -> apiMsg ?: ("Model \"" + model + "\" not available for this key.")
             429 -> "Rate limit or quota exceeded. Wait a moment and retry."
             in 500..599 -> "Gemini server error (" + code + "). Try again shortly."
             else -> apiMsg ?: ("Request failed (HTTP " + code + ").")
         }
-        Log.e(TAG, "HTTP " + code + ": " + body)
+        Log.e(TAG, "HTTP " + code + " on " + model + ": " + body)
         return Result.Failure(userMessage = userMsg, technical = body, httpCode = code)
     }
 }
