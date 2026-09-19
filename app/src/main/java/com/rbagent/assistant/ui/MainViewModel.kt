@@ -189,7 +189,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             personalitySystemPrompt = settings.getPersonality().systemPrompt,
             userName = settings.getUserName(), memoryFacts = memory.getFactStrings(),
             conversationHistory = _ui.value.messages.takeLast(6),
-            newUserMessage = original, systemHint = hint, enableFunctionCalling = false))
+            newUserMessage = original, systemHint = hint))
         val text = when (f) {
             is GeminiApiClient.Result.Success -> if (f.text.isNotBlank()) f.text else r.message
             is GeminiApiClient.Result.Failure -> r.message
