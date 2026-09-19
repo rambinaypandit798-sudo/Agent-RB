@@ -16,13 +16,17 @@ import android.provider.ContactsContract
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
-import java.net.URLEncoder
 
 /**
  * ActionDispatcher — Native Android intents execute karta hai.
- * Har external app launch se PEHLE floating overlay arm hota hai.
+ *
+ * Direct-execution guarantees:
+ *   • Calls — ACTION_CALL (not DIAL) when CALL_PHONE granted.
+ *   • YouTube — ACTION_SEARCH with query → real search results.
+ *   • Every external launch auto-arms the floating overlay first.
  */
 object ActionDispatcher {
+
     private const val TAG = "ActionDispatcher"
 
     fun execute(context: Context, action: RBAction): RBAction.ExecutionResult {
@@ -54,7 +58,6 @@ object ActionDispatcher {
         }
     }
 
-    /** Bubble auto-show jab tak overlay permission granted hai. */
     private fun armOverlay(context: Context, hint: String) {
         if (!OverlayPermissionHelper.canDrawOverlays(context)) return
         try { AssistantOverlayService.show(context, hint) }
@@ -91,39 +94,67 @@ object ActionDispatcher {
         return ok("${action.appName} khol diya.", "launch:$pkg")
     }
 
-    private fun playYouTube(context: Context, query: String): RBAction.ExecutionResult {
+    /**
+     * YouTube: real search results page — not just the home feed.
+     * Order: app ACTION_SEARCH → youtube.com URL → vnd.youtube deep → app home.
+     */
+    private fun playYouTube(context: Context, rawQuery: String): RBAction.ExecutionResult {
         val ytPkg = "com.google.android.youtube"
+        val query = QueryCleaner.cleanYouTube(rawQuery)
+        val encoded = Uri.encode(query)
+
         armOverlay(context, if (query.isBlank()) "Opening YouTube" else "Playing: $query")
 
-        if (isInstalled(context, ytPkg)) {
-            val intent = if (query.isBlank())
-                context.packageManager.getLaunchIntentForPackage(ytPkg)
-            else Intent(Intent.ACTION_SEARCH).apply {
-                setPackage(ytPkg); putExtra("query", query)
-            }
-            if (intent != null) {
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                try {
-                    context.startActivity(intent)
-                    val msg = if (query.isBlank()) "YouTube khol raha hoon."
-                              else "\"$query\" YouTube pe chala raha hoon."
-                    return ok(msg, "youtube:$query")
-                } catch (_: Exception) {}
-            }
+        // 1) YouTube app ACTION_SEARCH — real search page
+        if (query.isNotBlank() && isInstalled(context, ytPkg)) {
+            try {
+                val i = Intent(Intent.ACTION_SEARCH).apply {
+                    setPackage(ytPkg)
+                    putExtra("query", query)
+                    putExtra(SearchManager.QUERY, query)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(i)
+                return ok("\"$query\" YouTube pe chala raha hoon.", "youtube:$query")
+            } catch (e: Exception) { Log.w(TAG, "ACTION_SEARCH failed", e) }
         }
+
+        // 2) https://www.youtube.com/results?search_query=X — App Links / browser
         if (query.isNotBlank()) {
             try {
-                context.startActivity(Intent(Intent.ACTION_VIEW,
-                    Uri.parse("vnd.youtube:${Uri.encode(query)}"))
+                val url = "https://www.youtube.com/results?search_query=$encoded"
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))
                     .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
-                return ok("\"$query\" YouTube pe chala raha hoon.", "youtube-deep:$query")
-            } catch (_: Exception) {}
+                return ok("\"$query\" YouTube pe search kar raha hoon.", "youtube-web:$query")
+            } catch (e: Exception) { Log.w(TAG, "web search URL failed", e) }
         }
-        val url = if (query.isBlank()) "https://m.youtube.com"
-                  else "https://m.youtube.com/results?search_query=" + URLEncoder.encode(query, "UTF-8")
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))
-            .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
-        return ok("YouTube browser mein khol raha hoon.", "youtube-web:$query")
+
+        // 3) vnd.youtube: deep link
+        if (query.isNotBlank()) {
+            try {
+                val deep = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$encoded"))
+                    .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+                context.startActivity(deep)
+                return ok("\"$query\" YouTube pe chala raha hoon.", "youtube-deep:$query")
+            } catch (e: Exception) { Log.w(TAG, "vnd.youtube failed", e) }
+        }
+
+        // 4) Fallback — just open YouTube home
+        if (isInstalled(context, ytPkg)) {
+            val launch = context.packageManager.getLaunchIntentForPackage(ytPkg)
+            if (launch != null) {
+                launch.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                context.startActivity(launch)
+                return ok("YouTube khol diya.", "youtube:home")
+            }
+        }
+
+        // 5) Last resort — browser
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://m.youtube.com"))
+                .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
+            return ok("YouTube browser mein khol raha hoon.", "youtube:web")
+        } catch (e: Exception) { return fail("YouTube nahi khul paya.") }
     }
 
     private fun callContact(context: Context, name: String): RBAction.ExecutionResult {
@@ -134,22 +165,53 @@ object ActionDispatcher {
         return placeCall(context, number, name)
     }
 
-    private fun dialNumber(context: Context, number: String) =
+    private fun dialNumber(context: Context, number: String): RBAction.ExecutionResult =
         placeCall(context, number, number)
 
-    private fun placeCall(context: Context, number: String, label: String): RBAction.ExecutionResult {
-        val clean = number.replace(Regex("[^0-9+]"), "")
+    /**
+     * Directly places the call if CALL_PHONE is granted.
+     * Falls back to opening the dialer when the permission is missing —
+     * MainActivity startup already requests it, so this only happens on
+     * the very first command before the user grants it.
+     */
+    private fun placeCall(context: Context, rawNumber: String, label: String): RBAction.ExecutionResult {
+        val clean = rawNumber.replace(Regex("[^0-9+]"), "")
         if (clean.isBlank()) return fail("Invalid phone number.")
+
         val canCall = hasPerm(context, Manifest.permission.CALL_PHONE)
-        val intent = if (canCall) Intent(Intent.ACTION_CALL, Uri.parse("tel:$clean"))
-                     else Intent(Intent.ACTION_DIAL, Uri.parse("tel:$clean"))
-            .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-        return try {
-            armOverlay(context, "Calling $label")
-            context.startActivity(intent)
-            ok((if (canCall) "Call kar raha hoon " else "Dialer khol raha hoon ") + "$label.", "call:$clean")
-        } catch (e: Exception) { fail("Call nahi lag payi: ${e.message}") }
+
+        if (canCall) {
+            return try {
+                armOverlay(context, "Calling $label")
+                val callIntent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$clean")).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(callIntent)
+                ok("Call kar raha hoon $label ko.", "call:$clean")
+            } catch (e: SecurityException) {
+                Log.w(TAG, "CALL_PHONE revoked mid-action", e)
+                fallbackDial(context, clean, label)
+            } catch (e: Exception) {
+                Log.e(TAG, "ACTION_CALL failed", e)
+                fallbackDial(context, clean, label)
+            }
+        }
+
+        return fallbackDial(context, clean, label)
     }
+
+    private fun fallbackDial(context: Context, number: String, label: String): RBAction.ExecutionResult =
+        try {
+            armOverlay(context, "Dialer opening for $label")
+            val i = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(i)
+            ok("Dialer khul gaya $label ke liye. Auto-call ke liye Call permission grant karo.",
+                "dial:$number")
+        } catch (e: Exception) {
+            fail("Dialer nahi khula: ${e.message}")
+        }
 
     private fun lookupContactNumber(context: Context, name: String): String? = try {
         val uri = Uri.withAppendedPath(
@@ -163,7 +225,7 @@ object ActionDispatcher {
                 if (i >= 0) c.getString(i) else null
             } else null
         } finally { c?.close() }
-    } catch (_: Exception) { null }
+    } catch (e: Exception) { Log.e(TAG, "lookup failed", e); null }
 
     private fun sendSms(context: Context, a: RBAction.SendSms): RBAction.ExecutionResult {
         val target = a.recipient.trim()
@@ -173,13 +235,13 @@ object ActionDispatcher {
                 return fail("Contacts permission chahiye \"$target\" ke liye.")
             lookupContactNumber(context, target) ?: return fail("\"$target\" contacts mein nahi mila.")
         }
-        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number")).apply {
+        val i = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number")).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
             if (a.message.isNotBlank()) putExtra("sms_body", a.message)
         }
         return try {
             armOverlay(context, "Messaging $target")
-            context.startActivity(intent)
+            context.startActivity(i)
             ok("SMS $target ko khol raha hoon.", "sms:$number")
         } catch (_: Exception) { fail("SMS app nahi mili.") }
     }
@@ -199,7 +261,7 @@ object ActionDispatcher {
 
     private fun webSearch(context: Context, q: String): RBAction.ExecutionResult {
         val i = Intent(Intent.ACTION_VIEW,
-            Uri.parse("https://www.google.com/search?q=" + URLEncoder.encode(q, "UTF-8")))
+            Uri.parse("https://www.google.com/search?q=" + Uri.encode(q)))
             .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
         return try {
             armOverlay(context, "Searching: $q")

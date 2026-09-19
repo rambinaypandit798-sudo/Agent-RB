@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()           // edge-to-edge + IME insets handle
+        enableEdgeToEdge()
         requestStartupPermissions()
         maybeRequestOverlayOnce()
         setContent { RBAgentTheme { MainNavigation(viewModel = viewModel) } }
@@ -61,21 +61,28 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
-    /** Sirf PEHLI baar overlay permission page kholo. */
     private fun maybeRequestOverlayOnce() {
         if (OverlayPermissionHelper.canDrawOverlays(this)) return
         if (OverlayPermissionHelper.hasPromptedBefore(this)) return
         OverlayPermissionHelper.requestOverlayPermission(this)
     }
 
+    /**
+     * Startup permission batch — includes CALL_PHONE + SEND_SMS so that
+     * commands like "call Papa" and "message Mom" execute DIRECTLY
+     * without falling back to the dialer.
+     */
     private fun requestStartupPermissions() {
         val needed = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.READ_CONTACTS,
-            Manifest.permission.READ_PHONE_STATE
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.SEND_SMS
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             needed.add(Manifest.permission.POST_NOTIFICATIONS)
+
         val missing = needed.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
