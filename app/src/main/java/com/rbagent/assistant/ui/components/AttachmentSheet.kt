@@ -1,5 +1,6 @@
 package com.rbagent.assistant.ui.components
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -14,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -42,25 +42,59 @@ import com.rbagent.assistant.ui.theme.NeonCyan
 import com.rbagent.assistant.ui.theme.SlateMuted
 import com.rbagent.assistant.ui.theme.TextPrimary
 
+/**
+ * AttachmentSheet
+ * Material 3 ModalBottomSheet offering Photo / Video / Document picks.
+ *
+ * Each launcher is specialised to one MIME filter, so the MIME hint
+ * passed back to the caller is a compile-time constant — no runtime
+ * if-expression is needed inside the callback.
+ *
+ * @param onPick  (uri, mimeHint) — uri is null if the user cancelled;
+ *                mimeHint is non-null for image/video, null for docs
+ *                so the caller can resolve the type dynamically.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AttachmentSheet(
     onDismiss: () -> Unit,
-    onPick: (android.net.Uri?, String?) -> Unit
+    onPick: (Uri?, String?) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    // ── Photo picker ──
     val imageLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri -> onPick(uri, if (uri != null) "image/*" else null) }
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onPick(uri, "image/*")
+        } else {
+            onPick(null, null)
+        }
+    }
 
+    // ── Video picker ──
     val videoLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri -> onPick(uri, if (uri != null) "video/*" else null) }
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onPick(uri, "video/*")
+        } else {
+            onPick(null, null)
+        }
+    }
 
+    // ── Document picker (any MIME) ──
     val docLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri -> onPick(uri, if (uri != null) null) }
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            // Pass null MIME — the ViewModel resolves it via ContentResolver
+            onPick(uri, null)
+        } else {
+            onPick(null, null)
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -73,28 +107,39 @@ fun AttachmentSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
-            Text("Attach to message",
-                color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(
+                text = "Attach to message",
+                color = TextPrimary,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(Modifier.height(4.dp))
-            Text("Send images, videos or documents to RB Agent",
-                color = SlateMuted, fontSize = 12.sp)
+            Text(
+                text = "Send images, videos or documents to RB Agent",
+                color = SlateMuted,
+                fontSize = 12.sp
+            )
 
             Spacer(Modifier.height(18.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth()) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 AttachmentTile(
                     icon = Icons.Filled.Image,
                     label = "Photo",
                     tint = NeonCyan,
                     modifier = Modifier.weight(1f)
                 ) { imageLauncher.launch("image/*") }
+
                 AttachmentTile(
                     icon = Icons.Filled.VideoLibrary,
                     label = "Video",
                     tint = ElectricPink,
                     modifier = Modifier.weight(1f)
                 ) { videoLauncher.launch("video/*") }
+
                 AttachmentTile(
                     icon = Icons.Filled.Description,
                     label = "Document",
@@ -134,10 +179,19 @@ private fun AttachmentTile(
                 .border(1.dp, tint.copy(alpha = 0.35f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = null, tint = tint,
-                modifier = Modifier.size(22.dp))
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(22.dp)
+            )
         }
         Spacer(Modifier.height(8.dp))
-        Text(label, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(
+            text = label,
+            color = TextPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium
+        )
     }
 }
