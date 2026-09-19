@@ -26,10 +26,10 @@ class GeminiApiClient {
          * gemini-pro was retired; it is intentionally excluded.
          */
         private val MODEL_FALLBACKS = listOf(
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-flash",
+            "gemini-2.0-flash-latest",
             "gemini-2.0-flash",
-            "gemini-1.5-flash-8b"
+            "gemini-2.0-flash",
+            "gemini-2.0-flash"
         )
     }
 
